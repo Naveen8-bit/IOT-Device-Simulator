@@ -3,4 +3,4 @@ class TemperatureSensor:
     def read_temperature(self):
         if random.random() < 0.1:
             raise Exception("Sensor failure")
-        return random.randint(10, 43)
+        return random.randint(-40, 80)
