@@ -201,6 +201,14 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# IoT Simulator files
+sensor_store.json
+sensor_store.json.tmp
+device.log
+
+# Python cache
+__pycache__/
+*.pyc
 # Marimo
 marimo/_static/
 marimo/_lsp/
