@@ -1,9 +1,9 @@
+import threading
 import time
-import json
+import random
 import yaml
-from datetime import datetime
 
-from sensor import TemperatureSensor
+from sensor import Sensor
 from mqtt_client import MQTTClient
 from logger import setup_logger
 
@@ -12,38 +12,53 @@ logging = setup_logger()
 with open("config.yaml", "r") as file:
     config = yaml.safe_load(file)
 
-device_id = config["device_id"]
-topic = config["mqtt_topic"]
-interval = config["interval"]
+DEVICE_PREFIX = config["device_prefix"]
+BASE_TOPIC    = config["mqtt_base_topic"]
+INTERVAL_MIN  = config["interval_min"]
+INTERVAL_MAX  = config["interval_max"]
+NUM_SENSORS   = config["num_sensors"]
 
-sensor = TemperatureSensor()
+# init mqtt (starts connection and publisher thread)
 mqtt = MQTTClient()
 
-logging.info("Device Started")
 
-while True:
+def sensor_worker(sensor_id):
+    sensor = Sensor()
 
-    try:
+    while True:
+        base_topic = f"{BASE_TOPIC}/{DEVICE_PREFIX}_{sensor_id}"
 
-        temp = sensor.read_temperature()
+        try:
+            temp     = sensor.read_temperature()
+            humidity = sensor.read_humidity()
+            status   = sensor.get_status()
 
-        data = {
-            "device_id": device_id,
-            "temperature": temp,
-            "status": "OK"
-        }
+            # push to queue (publisher thread handles sending)
+            mqtt.enqueue(f"{base_topic}/temperature", temp)
+            mqtt.enqueue(f"{base_topic}/humidity", humidity)
+            mqtt.enqueue(f"{base_topic}/status", status)
 
-        message = json.dumps(data)
+            if sensor_id % 25 == 0:
+                logging.info(f"{base_topic} data sent")
 
-        mqtt.publish(topic, message)
+        except Exception as e:
+            mqtt.enqueue(f"{base_topic}/status", f"ERROR: {str(e)}")
+            logging.error(f"{base_topic} error")
 
-    except Exception as e:
+        time.sleep(random.uniform(INTERVAL_MIN, INTERVAL_MAX))
 
-        error_data = {
-            "device_id": device_id,
-            "status": "ERROR",
-            "message": str(e)
-        }
+
+threads = []
+
+for i in range(1, NUM_SENSORS + 1):
+    t = threading.Thread(target=sensor_worker, args=(i,))
+    t.daemon = True
+    t.start()
+    threads.append(t)
+
+for t in threads:
+    t.join()
+
 
         mqtt.publish(topic, json.dumps(error_data))
 
