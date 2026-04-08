@@ -1,9 +1,0 @@
-2026-03-12 16:34:41,952 - INFO - Device Started
-2026-03-12 16:34:41,955 - INFO - Published to farm/sensor/temperature: {"device_id": "sensor_01", "temperature": 31, "status": "OK"}
-2026-03-12 16:34:44,956 - INFO - Published to farm/sensor/temperature: {"device_id": "sensor_01", "temperature": 12, "status": "OK"}
-2026-03-12 16:34:47,958 - INFO - Published to farm/sensor/temperature: {"device_id": "sensor_01", "temperature": 35, "status": "OK"}
-2026-03-12 16:34:50,960 - INFO - Published to farm/sensor/temperature: {"device_id": "sensor_01", "temperature": 28, "status": "OK"}
-2026-03-12 16:34:53,965 - INFO - Published to farm/sensor/temperature: {"device_id": "sensor_01", "temperature": 33, "status": "OK"}
-2026-03-12 16:34:56,968 - INFO - Published to farm/sensor/temperature: {"device_id": "sensor_01", "status": "ERROR", "message": "Sensor failure"}
-2026-03-12 16:34:59,970 - INFO - Published to farm/sensor/temperature: {"device_id": "sensor_01", "temperature": 37, "status": "OK"}
-2026-03-12 16:35:02,972 - INFO - Published to farm/sensor/temperature: {"device_id": "sensor_01", "temperature": 16, "status": "OK"}
