@@ -3,22 +3,37 @@ import threading
 from queue import Queue
 import uuid
 import json
+import time
 from local_store import LocalStore
+
 
 class MQTTClient:
     def __init__(self):
         print("[SYSTEM] Device starting...")
 
         self.broker = "broker.hivemq.com"
-        self.port   = 1883
+        self.port = 1883
 
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-        self.client.on_connect    = self.on_connect
+
+        # Auto reconnect
+        self.client.reconnect_delay_set(min_delay=1, max_delay=5)
+
+        # Limit in-flight messages
+        self.client.max_inflight_messages_set(50)
+
+        self.client.on_connect = self.on_connect
         self.client.on_disconnect = self.on_disconnect
 
         self.store = LocalStore()
 
         self.connected = False
+        self.recovering = False
+
+        # logging helpers
+        self.offline_counter = 0
+        self.was_offline = False
+
         self.queue = Queue()
 
         # Counters
@@ -38,13 +53,10 @@ class MQTTClient:
 
     def _create_payload(self, msg_id, topic, message):
         parts = topic.split("/")
-        sensor_id = parts[-2]
-        data_type = parts[-1]
-
         return json.dumps({
             "id": msg_id,
-            "sensor_id": sensor_id,
-            "type": data_type,
+            "sensor_id": parts[-2],
+            "type": parts[-1],
             "value": message
         })
 
@@ -52,66 +64,115 @@ class MQTTClient:
         while True:
             msg_id, topic, message = self.queue.get()
 
+            # Wait during recovery (no requeue)
+            if self.recovering:
+                time.sleep(0.05)
+                self.queue.task_done()
+                continue
+
             payload = self._create_payload(msg_id, topic, message)
 
-            if self.connected:
+            if self.connected and self.client.is_connected():
+
                 result = self.client.publish(topic, payload, qos=1)
 
-                if result.rc == 0:
+                if result.rc == mqtt.MQTT_ERR_SUCCESS:
                     self.total_sent += 1
 
-                    if self.total_sent % 50 == 0:
-                        print(f"[PUBLISHED] Total sent: {self.total_sent}")
+                    if self.total_sent % 200 == 0:
+                        print(f"[LIVE] Messages sent: {self.total_sent}")
+
                 else:
-                    print("[ERROR] Publish failed → storing locally")
+                    print("[ERROR] Publish failed → saving locally")
                     self.store.save(msg_id, topic, message)
                     self.total_stored += 1
+
+                time.sleep(0.002)
+
             else:
-                print("[OFFLINE] Storing data locally")
+                #OFFLINE LOGGING
+                self.offline_counter += 1
+                self.was_offline = True
+
+                if self.offline_counter % 100 == 0:
+                    print(f"[OFFLINE] Stored {self.offline_counter} messages locally")
+
                 self.store.save(msg_id, topic, message)
                 self.total_stored += 1
 
             self.queue.task_done()
 
     def on_connect(self, client, userdata, flags, reason_code, properties):
-        print("[MQTT] Connected to broker")
+        print("\n[MQTT] Connected to broker")
+
+        if reason_code != 0:
+            print("[MQTT] Connection failed")
+            self.connected = False
+            return
+
         self.connected = True
 
+        #Show reconnect message only once
+        if self.was_offline:
+            print("[SYSTEM] Connection restored. Starting recovery...\n")
+            self.was_offline = False
+            self.offline_counter = 0
+
+        threading.Thread(target=self._recover_messages, daemon=True).start()
+
+    def _recover_messages(self):
         unsent = self.store.get_unsent()
 
-        if unsent:
-            print(f"[MQTT] Sending {len(unsent)} stored messages...")
+        if not unsent:
+            print("[MQTT] No stored messages. Normal operation resumed.")
+            return
 
-            sent_ids = []
+        self.recovering = True
 
-            for msg_id, topic, message in unsent:
-                payload = self._create_payload(msg_id, topic, message)
+        total = len(unsent)
+        print(f"[RECOVERY] Found {total} stored messages")
+        print("[RECOVERY] Sending stored messages...\n")
 
-                result = self.client.publish(topic, payload, qos=1)
+        sent_ids = []
+        count = 0
 
-                if result.rc == 0:
-                    sent_ids.append(msg_id)
-                    self.total_sent += 1
-                else:
-                    print(f"[ERROR] Failed to send stored message {msg_id}")
+        for msg_id, topic, message in unsent:
 
-            # mark sent AFTER publishing loop
-            for msg_id in sent_ids:
-                self.store.mark_sent(msg_id)
+            if not (self.connected and self.client.is_connected()):
+                print("[RECOVERY] Connection lost during recovery")
+                break
 
-            self.store.cleanup_sent()
-            print("[MQTT] Stored messages sent and cleaned")
+            payload = self._create_payload(msg_id, topic, message)
 
-        self.print_stats()
+            result = self.client.publish(topic, payload, qos=1)
+
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                sent_ids.append(msg_id)
+                count += 1
+                self.total_sent += 1
+
+                #SMART PROGRESS LOG
+                if count % 500 == 0:
+                    percent = (count / total) * 100
+                    print(f"[RECOVERY] {count}/{total} ({percent:.1f}%) completed")
+
+            else:
+                print(f"[ERROR] Failed {msg_id}")
+
+            time.sleep(0.01)
+
+        for msg_id in sent_ids:
+            self.store.mark_sent(msg_id)
+
+        self.store.cleanup_sent()
+
+        print(f"\n[RECOVERY COMPLETE] {count} messages processed")
+        print("[SYSTEM] Switching to LIVE data flow\n")
+
+        self.recovering = False
 
     def on_disconnect(self, client, userdata, flags, reason_code, properties):
-        print("[MQTT] Disconnected")
-        print("[MQTT] Data will now be store locally")
-        self.connected = False
+        print(f"\n[MQTT] Disconnected (code: {reason_code})")
+        print("[MQTT] Waiting for automatic reconnect...")
 
-    def print_stats(self):
-        print("\n========== STATS ==========")
-        print(f"Generated : {self.total_generated}")
-        print(f"Sent      : {self.total_sent}")
-        print(f"Stored    : {self.total_stored}")
-        print("===========================\n")
+        self.connected = False
