@@ -2,4 +2,4 @@ device_prefix: sensor
 mqtt_base_topic: farm/sensors/Naveen_101sensor
 interval_min: 1
 interval_max: 3
-num_sensors: 50
+num_sensors: 150
