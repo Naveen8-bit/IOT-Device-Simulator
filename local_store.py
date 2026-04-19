@@ -4,7 +4,7 @@ import threading
 import time
 
 STORE_FILE = "sensor_store.json"
-MAX_RECORDS = 5000   # limit storage size
+MAX_RECORDS = 50000   # limit storage size
 
 
 class LocalStore:
